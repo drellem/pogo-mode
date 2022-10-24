@@ -874,14 +874,7 @@ The function does pretty much nothing when triggered on remote files
 as all the operations it normally performs are extremely slow over
 tramp."
   (pogo-maybe-limit-project-file-buffers)
-  (unless (file-remote-p default-directory)
-    (when pogo-dynamic-mode-line
-      (pogo-update-mode-line))
-    (pogo-track-known-projects-find-file-hook)))
-
-(defun pogo-track-known-projects-find-file-hook ()
-  "Function for caching projects with `find-file-hook'."
-  (and pogo-track-known-projects-automatically (pogo-project-p)))
+  (pogo-project-p))
 
 
 ;;;###autoload
