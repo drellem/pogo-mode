@@ -60,6 +60,11 @@
   :group 'pogo
   :type 'string)
 
+(defcustom pogo-debug-log t
+  "Pogo debug logging."
+  :group 'pogo
+  :type 'boolean)
+
 (defcustom pogo-project-name nil
   "If this value is non-nil, it will be used as project name.
 
@@ -174,7 +179,7 @@ be killed."
   "Whether to discover projects when `pogo-mode' is activated."
   :group 'pogo
   :type 'boolean
-  :package-version '(pogo . "2.3.0"))
+  :package-version '(pogo . "0.0.1"))
 
 (defcustom pogo-project-search-path nil
   "List of folders where pogo is automatically going to look for projects.
@@ -223,6 +228,15 @@ DESCRIPTION is a one-line description of what the key selects.")
   (cond ((fboundp 'package-get-version)
          (package-get-version))))
 
+(defun pogo-log (msg &rest args)
+  (when pogo-debug-log
+    (progn
+      (when (not (get-buffer "*pogo-mode-log*"))
+	(get-buffer-create "*pogo-mode-log*"))
+      (with-current-buffer "*pogo-mode-log*"
+	(goto-char (point-max))
+	(insert (apply 'format (append (list(concat msg "\n")) args)))))))
+
 ;;;###autoload
 (defun pogo-version (&optional show-version)
   "Get the Pogo version as string.
@@ -239,7 +253,7 @@ just return nil."
   (interactive (list t))
   (let ((version (or (pogo--pkg-version) pogo-version)))
    (if show-version
-       (message "Pogo %s" version)
+       (pogo-log "Pogo %s" version)
      version)))
 
 
@@ -419,6 +433,7 @@ Regular expressions can be use."
   "Get a list of a project's buffers.
 If PROJECT is not specified the command acts on the current project."
   (let* ((project-root (or project (pogo-acquire-root)))
+	 (test-out (pogo-log "project-root is %s" project-root))
          (all-buffers (cl-remove-if-not
                        (lambda (buffer)
                          (pogo-project-buffer-p buffer project-root))
@@ -433,14 +448,7 @@ If PROJECT is not specified the command acts on the current project."
     (let ((directory (if buffer-file-name
                          (file-name-directory buffer-file-name)
                        default-directory)))
-      (and (not (string-prefix-p " " (buffer-name buffer)))
-           (not (pogo-ignored-buffer-p buffer))
-           directory
-           (string-equal (file-remote-p directory)
-                         (file-remote-p project-root))
-           (not (string-match-p "^http\\(s\\)?://" directory))
-           (string-prefix-p project-root (file-truename directory) (eq system-type 'windows-nt))))))
-
+      (string= (pogo-visit directory) (expand-file-name project-root)))))
 
 (defun pogo-project-buffer-names ()
   "Get a list of project buffer names."
@@ -536,7 +544,7 @@ would be `find-file-other-window' or `find-file-other-frame'"
 			   :sync t
 			   :parser 'json-read
 			   :success (cl-function (lambda (&key data &allow-other-keys)
-						   (message "Received: %s" data)))))))
+						   (pogo-log "Received: %s" data)))))))
     (mapcar (lambda (x) (cdr (assoc 'path x))) resp)))
 
 (defun pogo-open-projects ()
@@ -553,14 +561,14 @@ An open project is a project with any open buffers."
 (defun pogo-visit (relative-path)
   (let ((path (expand-file-name relative-path)))
     (progn
-      (message "Visiting %s" path)
+      (pogo-log "Visiting %s" path)
       (cdr (assoc 'path (assoc 'project (request-response-data (request "http://localhost:10000/file"
 								 :sync t
 								 :type "POST"
 								 :data (json-encode `(("path" . ,path)))
 								 :parser 'json-read
 								 :success (cl-function (lambda (&key data &allow-other-keys)
-											 (message "Received: %S" data)))))))))))
+											 (pogo-log "Received: %S" data)))))))))))
 
 (defun pogo-get-search-plugin-path ()
   (if pogo-search-plugin
@@ -570,16 +578,16 @@ An open project is a project with any open buffers."
 			     :sync t
 			     :parser 'json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
-						     (message "Received: %S" data))))))
+						     (pogo-log "Received: %S" data))))))
 	 (search-plugins (seq-filter (lambda (p) (cl-search pogo-search-plugin-name p)) resp))
 	 (search-plugin (cond
 			 ((= 0 (length search-plugins))
 			  (progn
-			    (message "Warning: No result found for %s" pogo-search-plugin-name)
+			    (pogo-log "Warning: No result found for %s" pogo-search-plugin-name)
 			    nil))
 			 ((= 1 (length search-plugins)) (car search-plugins))
 			 (t (progn
-			      (message "Warning: Found too many results for %s" pogo-search-plugin-name)
+			      (pogo-log "Warning: Found too many results for %s" pogo-search-plugin-name)
 			      (car search-plugins))))))
       (progn
 	(setq pogo-search-plugin search-plugin)
@@ -587,7 +595,7 @@ An open project is a project with any open buffers."
 
 (defun pogo-print-and-return (msg v)
   (progn
-    (message "%s %s" msg v)
+    (pogo-log "%s %s" msg v)
     v))
 
 (defun pogo-parse-result (resp)
@@ -612,7 +620,7 @@ An open project is a project with any open buffers."
        (paths (cdr (assoc 'paths inner-resp))))
     (if (not (pogo-nil-or-empty err))
 	(progn
-	  (message "Error getting project files %s" err)
+	  (pogo-log "Error getting project files %s" err)
 	  nil)
       (append paths '()))))
 
@@ -627,7 +635,7 @@ An open project is a project with any open buffers."
 						   ("value" . ,command)))
 			     :parser 'json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
-						     (message "Received: %S" data))))))))
+						     (pogo-log "Received: %S" data))))))))
 
 (defun pogo-project-root (&optional dir)
   (let ((dir (or dir default-directory)))
@@ -724,7 +732,7 @@ The buffer are killed according to the value of
                   (pogo-completing-read
                    "Recently visited files: "
                    (pogo-recentf-files))))
-    (message "recentf is not enabled")))
+    (pogo-log"recentf is not enabled")))
 
 ;; Bindings
 
