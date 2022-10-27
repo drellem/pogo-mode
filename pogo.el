@@ -212,6 +212,34 @@ See also `pogo-mode-line-function' and `pogo-update-mode-line'."
   :type 'boolean
   :package-version '(pogo . "0.0.1"))
 
+(defcustom pogo-mode-line-function 'pogo-default-mode-line
+  "The function to use to generate project-specific mode-line.
+The default function adds the project name and type to the mode-line.
+See also `pogo-update-mode-line'."
+  :group 'pogo
+  :type 'function
+  :package-version '(pogo . "0.0.1"))
+
+(defcustom pogo-mode-line-prefix
+  " Pogo"
+  "Mode line lighter prefix for Pogo.
+It's used by `pogo-default-mode-line'
+when using dynamic mode line lighter and is the only
+thing shown in the mode line otherwise."
+  :group 'pogo
+  :type 'string
+  :package-version '(pogo . "0.0.1"))
+
+(defcustom pogo-track-known-projects-automatically t
+  "Controls whether Pogo will automatically register known projects.
+
+When set to nil you'll have always add projects explicitly with
+`pogo-add-known-project'."
+  :group 'pogo
+  :type 'boolean
+  :package-version '(pogo . "0.0.1"))
+
+
 (defconst pogo-version "0.0.1-snapshot"
   "The current version of Pogo.")
 
@@ -264,6 +292,12 @@ just return nil."
    list1))
 
 ;;; Internal functions
+
+;; Start server
+(defun pogo-start ()
+  (when (or (and (not file-remote-p default-directory)) (executable-find "pogo"))
+    (and (version<= "27.0" emacs-version) (with-no-warnings (executable-find "go" (file-remote-p default-directory)))))
+  (with-temp-buffer (process-file "go" nil t nil "env" "POGO_PATH")))
 
 ;;; Find next/previous project buffer
 (defun pogo--repeat-until-project-buffer (orig-fun &rest args)
