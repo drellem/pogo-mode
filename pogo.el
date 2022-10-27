@@ -230,6 +230,18 @@ thing shown in the mode line otherwise."
   :type 'string
   :package-version '(pogo . "0.0.1"))
 
+(defcustom pogo-max-failure-count 3
+  "Maximum number of times to attempt to start the pogo server."
+  :group 'pogo
+  :type 'integer
+  :package-version '(pogo . "0.0.1"))
+
+(defcustom pogo-health-check-seconds 10
+  "Number of seconds to wait before trying health check."
+  :group 'pogo
+  :type 'integer
+  :package-version '(pogo . "0.0.1"))
+
 (defcustom pogo-track-known-projects-automatically t
   "Controls whether Pogo will automatically register known projects.
 
@@ -242,6 +254,11 @@ When set to nil you'll have always add projects explicitly with
 
 (defconst pogo-version "0.0.1-snapshot"
   "The current version of Pogo.")
+
+;; Number of failures starting pogo server
+(defvar pogo-failure-count 0)
+
+(defvar pogo-server-started nil)
 
 (defvar pogo-commander-methods nil
   "List of file-selection methods for the `pogo-commander' command.
@@ -295,9 +312,11 @@ just return nil."
 
 ;; Start server
 (defun pogo-start ()
-  (when (or (and (not file-remote-p default-directory)) (executable-find "pogo"))
-    (and (version<= "27.0" emacs-version) (with-no-warnings (executable-find "go" (file-remote-p default-directory)))))
-  (with-temp-buffer (process-file "go" nil t nil "env" "POGO_PATH")))
+  (progn
+    (pogo-log "Starting server")
+    (when (or (and (not (file-remote-p default-directory)) (executable-find "pogo"))
+	      (and (version<= "27.0" emacs-version) (with-no-warnings (executable-find "pogo" (file-remote-p default-directory)))))
+      (with-temp-buffer (start-process "pogo" "*pogo-server*" "pogo")))))
 
 ;;; Find next/previous project buffer
 (defun pogo--repeat-until-project-buffer (orig-fun &rest args)
@@ -573,13 +592,41 @@ would be `find-file-other-window' or `find-file-other-frame'"
 
 ;; External functions
 
+(defun pogo-try-start ()
+  "Attempt to start the pogo server, run health checks."
+  (interactive)
+  (when (not pogo-server-started)
+   (if (>= pogo-failure-count pogo-max-failure-count)
+      (message "Error starting pogo server. Try again with M-x pogo-try-start")
+    (progn
+      (pogo-start)
+      (run-with-timer pogo-health-check-seconds nil 'pogo-health-check)))))
+
+(defun pogo-health-check ()
+  (request "http://localhost:10000/health"
+    :parser 'json-read
+    :success (cl-function (lambda (&key data &allow-other-keys)
+			    (setq pogo-failure-count 0)
+			    (setq pogo-server-started t)
+			    (pogo-log "Health check success")))
+    :error (cl-function (lambda (&key error-thrown &allow-other-keys)
+			  (setq pogo-server-started nil)
+			  (setq pogo-failure-count (+ pogo-failure-count 1))
+			  (pogo-log "Health check failed")c
+			  (pogo-try-start)))))
+
 (defun pogo-known-projects ()
   (let ((resp (request-response-data (request "http://localhost:10000/projects"
 			   :sync t
 			   :parser 'json-read
 			   :success (cl-function (lambda (&key data &allow-other-keys)
-						   (pogo-log "Received: %s" data)))))))
+						   (pogo-log "Received: %s" data)))
+			   :error (cl-function (lambda (&key error-thrown &allow-other-keys)
+						 (setq pogo-server-started nil)
+						 (pogo-try-start)))))))
     (mapcar (lambda (x) (cdr (assoc 'path x))) resp)))
+
+
 
 (defun pogo-open-projects ()
   "Return a list of all open projects.
@@ -602,7 +649,10 @@ An open project is a project with any open buffers."
 								 :data (json-encode `(("path" . ,path)))
 								 :parser 'json-read
 								 :success (cl-function (lambda (&key data &allow-other-keys)
-											 (pogo-log "Received: %S" data)))))))))))
+										(pogo-log "Received: %S" data)))
+								 :error (cl-function (lambda (&key error-thrown &allow-other-keys)
+										       (setq pogo-server-started nil)
+										       (pogo-try-start)))))))))))
 
 (defun pogo-get-search-plugin-path ()
   (if pogo-search-plugin
@@ -612,7 +662,10 @@ An open project is a project with any open buffers."
 			     :sync t
 			     :parser 'json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
-						     (pogo-log "Received: %S" data))))))
+						     (pogo-log "Received: %S" data)))
+			     :error (cl-function (lambda (&key error-thrown &allow-other-keys)
+						 (setq pogo-server-started nil)
+						 (pogo-try-start))))))
 	 (search-plugins (seq-filter (lambda (p) (cl-search pogo-search-plugin-name p)) resp))
 	 (search-plugin (cond
 			 ((= 0 (length search-plugins))
@@ -669,7 +722,10 @@ An open project is a project with any open buffers."
 						   ("value" . ,command)))
 			     :parser 'json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
-						     (pogo-log "Received: %S" data))))))))
+						     (pogo-log "Received: %S" data)))
+			     :error (cl-function (lambda (&key error-throw &allow-other-keys)
+						 (setq pogo-server-started nil)
+						 (pogo-try-start))))))))
 
 (defun pogo-project-root (&optional dir)
   (let ((dir (or dir default-directory)))
@@ -929,7 +985,10 @@ tramp."
     (add-hook 'find-file-hook 'pogo-find-file-hook-function)
     (add-hook 'pogo-find-dir-hook #'pogo-track-known-projects-find-file-hook t)
     (add-hook 'dired-before-readin-hook #'pogo-track-known-projects-find-file-hook t t)
-    (advice-add 'compilation-find-file :around #'compilation-find-file-pogo-find-compilation-buffer))
+    (advice-add 'compilation-find-file :around #'compilation-find-file-pogo-find-compilation-buffer)
+    (setq pogo-failure-count 0)
+    (setq pogo-server-started nil)
+    (pogo-try-start))
    (t
     (remove-hook 'find-file-hook #'pogo-find-file-hook-function)
     (remove-hook 'dired-before-readin-hook #'pogo-track-known-projects-find-file-hook t)
