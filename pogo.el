@@ -602,9 +602,15 @@ would be `find-file-other-window' or `find-file-other-frame'"
       (pogo-start)
       (run-with-timer pogo-health-check-seconds nil 'pogo-health-check)))))
 
+(defun custom-json-read ()
+  (progn
+    (when (boundp 'url-http-end-of-headers)
+      (goto-char url-http-end-of-headers))
+    (json-read)))
+
 (defun pogo-health-check ()
   (request "http://localhost:10000/health"
-    :parser 'json-read
+    :parser 'custom-json-read
     :success (cl-function (lambda (&key data &allow-other-keys)
 			    (setq pogo-failure-count 0)
 			    (setq pogo-server-started t)
@@ -612,13 +618,13 @@ would be `find-file-other-window' or `find-file-other-frame'"
     :error (cl-function (lambda (&key error-thrown &allow-other-keys)
 			  (setq pogo-server-started nil)
 			  (setq pogo-failure-count (+ pogo-failure-count 1))
-			  (pogo-log "Health check failed")c
+			  (pogo-log "Health check failed %s" error-thrown)
 			  (pogo-try-start)))))
 
 (defun pogo-known-projects ()
   (let ((resp (request-response-data (request "http://localhost:10000/projects"
 			   :sync t
-			   :parser 'json-read
+			   :parser 'custom-json-read
 			   :success (cl-function (lambda (&key data &allow-other-keys)
 						   (pogo-log "Received: %s" data)))
 			   :error (cl-function (lambda (&key error-thrown &allow-other-keys)
@@ -647,7 +653,7 @@ An open project is a project with any open buffers."
 								 :sync t
 								 :type "POST"
 								 :data (json-encode `(("path" . ,path)))
-								 :parser 'json-read
+								 :parser 'custom-json-read
 								 :success (cl-function (lambda (&key data &allow-other-keys)
 										(pogo-log "Received: %S" data)))
 								 :error (cl-function (lambda (&key error-thrown &allow-other-keys)
@@ -660,7 +666,7 @@ An open project is a project with any open buffers."
     (letrec
 	((resp (request-response-data (request "http://localhost:10000/plugins"
 			     :sync t
-			     :parser 'json-read
+			     :parser 'custom-json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
 						     (pogo-log "Received: %S" data)))
 			     :error (cl-function (lambda (&key error-thrown &allow-other-keys)
@@ -720,7 +726,7 @@ An open project is a project with any open buffers."
 			     :type "POST"
 			     :data (json-encode `(("plugin" . ,(pogo-get-search-plugin-path))
 						   ("value" . ,command)))
-			     :parser 'json-read
+			     :parser 'custom-json-read
 			     :success (cl-function (lambda (&key data &allow-other-keys)
 						     (pogo-log "Received: %S" data)))
 			     :error (cl-function (lambda (&key error-throw &allow-other-keys)
